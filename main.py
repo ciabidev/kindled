@@ -129,7 +129,7 @@ async def delete_document(collection, data: dict) -> Optional[dict]:
 # ------------------------------
 @app.get("/health")
 async def root():
-    return {"message": "kindled is running!"}
+    return {"message": "kindled is running!"}, 200
 
 @app.get("/notes/")
 @limiter.limit("10/minute")

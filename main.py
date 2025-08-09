@@ -127,9 +127,9 @@ async def delete_document(collection, data: dict) -> Optional[dict]:
 # ------------------------------
 # GET Endpoints
 # ------------------------------
-@app.get("/")
+@app.get("/health")
 async def root():
-    return {"message": "Welcome to the Kindled API!"}
+    return {"message": "kindled is running!"}
 
 @app.get("/notes/")
 @limiter.limit("10/minute")

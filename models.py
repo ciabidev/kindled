@@ -1,40 +1,24 @@
 from pydantic import BaseModel, constr
 
+from typing import Optional
+from pydantic import BaseModel, constr
+
+# ---------- Create/Update Models ----------
 class Note(BaseModel):
     title: constr(strip_whitespace=True, min_length=1, max_length=100)
     content: constr(strip_whitespace=True, min_length=1, max_length=2000)
-    edit_code: constr(min_length=6, max_length=64)
-    unique_name: str = None
+    edit_code: constr(min_length=6, max_length=64)  # raw edit code on create
+    # unique_name removed — generated automatically
 
 class PrayerRequest(BaseModel):
     title: constr(strip_whitespace=True, min_length=1, max_length=100)
     content: constr(strip_whitespace=True, min_length=1, max_length=2000)
     edit_code: constr(min_length=6, max_length=64)
-    unique_name: str = None
+    # unique_name removed — generated automatically
 
+# ---------- Delete Models ----------
 class DeleteNote(BaseModel):
     edit_code: constr(min_length=6, max_length=64)
-    unique_name: str = None
 
 class DeletePrayerRequest(BaseModel):
     edit_code: constr(min_length=6, max_length=64)
-    unique_name: str = None
-
-# class UserSignup(BaseModel):
-#     email: str
-#     username: str
-#     password: str # hashed
-
-# class UserLogin(BaseModel):
-#     email: str
-#     password: str
-
-# class UserUpdate(BaseModel):
-#     username: str = None
-#     email: str = None
-#     password: str = None # hashed
-
-# class User(BaseModel):
-#     email: str
-#     username: str
-#     password: str # hashed

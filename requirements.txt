@@ -1,9 +1,7 @@
 requests
 aiohttp
 python-dotenv
-flask
 motor
-flask-sqlalchemy
 redis
 types-redis
 uvicorn

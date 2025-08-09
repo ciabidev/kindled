@@ -127,7 +127,7 @@ async def delete_document(collection, data: dict) -> Optional[dict]:
 # ------------------------------
 # GET Endpoints
 # ------------------------------
-@app.get("/health")
+@app.get("/")
 async def root():
     return {"message": "kindled is running!"}, 200
 

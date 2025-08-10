@@ -6,8 +6,10 @@ from typing import Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
-from fastapi import Request
+
+from pydantic import BaseModel, constr
 import os
 import uuid
 import dotenv
@@ -122,62 +124,79 @@ async def delete_document(collection, data: dict) -> Optional[dict]:
         return {"deleted": True, "deleted_count": result.deleted_count}
     return None
 
+
+
+
 # ------------------------------
-# NOTES 
+# ROOT
 # ------------------------------
 @app.get("/")
 async def root():
-    return {"message": "kindled is running!"}, 200
+    return JSONResponse(
+        content={"message": "kindled is running!"},
+        status_code=status.HTTP_200_OK
+    )
 
+
+# ------------------------------
+# NOTES
+# ------------------------------
 @app.get("/notes/")
 @limiter.limit("10/minute")
 async def list_notes(request: Request):
-    return [serialize_doc(doc) async for doc in db.notes.find({})], 200
+    """List all notes."""
+    data = [serialize_doc(doc) async for doc in db.notes.find({})]
+    return JSONResponse(content=data, status_code=status.HTTP_200_OK)
 
 
 @app.get("/notes/{unique_name}")
 @limiter.limit("10/minute")
 async def get_note(unique_name: str, request: Request):
+    """Get a note by unique_name."""
     note = await db.notes.find_one({"unique_name": unique_name})
-    return serialize_doc(note) if note else ({"error": "not found"}, 404)
+    if note:
+        return JSONResponse(content=serialize_doc(note), status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "not found"}, status_code=status.HTTP_404_NOT_FOUND)
 
 
 @app.post("/notes/")
 @limiter.limit("5/minute")
 async def create_note(note: Note, request: Request):
+    """Create a note."""
     note_data = note.model_dump()
     text_to_check = f"{note_data['title']} {note_data['content']}"
 
     if await is_illegal_content(text_to_check):
-        return {"error": "contains prohibited or unsafe content."}, 400
+        return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=status.HTTP_400_BAD_REQUEST)
 
-    return await create_document(db.notes, note_data), 201
+    created = await create_document(db.notes, note_data)
+    return JSONResponse(content=created, status_code=status.HTTP_201_CREATED)
 
 
 @app.patch("/notes/{unique_name}")
 @limiter.limit("10/minute")
 async def edit_note(unique_name: str, note: Note, request: Request):
+    """Edit a note by unique_name and edit_code."""
     note_data = note.model_dump()
     text_to_check = f"{note_data['title']} {note_data['content']}"
 
     if await is_illegal_content(text_to_check):
-        return {"error": "contains prohibited or unsafe content."}, 400
+        return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=status.HTTP_400_BAD_REQUEST)
 
-    updated = await edit_document(
-        db.notes,
-        {**note_data, "unique_name": unique_name}
-    )
-    return updated if updated else ({"error": "invalid edit code or note not found"}, 400)
+    updated = await edit_document(db.notes, {**note_data, "unique_name": unique_name})
+    if updated:
+        return JSONResponse(content=updated, status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "invalid edit code or note not found"}, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 @app.delete("/notes/{unique_name}")
 @limiter.limit("5/minute")
 async def delete_note(unique_name: str, note: DeleteNote, request: Request):
-    deleted = await delete_document(
-        db.notes,
-        {"unique_name": unique_name, "edit_code": note.edit_code}
-    )
-    return deleted if deleted else ({"error": "invalid edit code or note not found"}, 400)
+    """Delete a note by unique_name and edit_code."""
+    deleted = await delete_document(db.notes, {"unique_name": unique_name, "edit_code": note.edit_code})
+    if deleted:
+        return JSONResponse(content=deleted, status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "invalid edit code or note not found"}, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 # ------------------------------
@@ -186,62 +205,67 @@ async def delete_note(unique_name: str, note: DeleteNote, request: Request):
 @app.get("/prayer-requests/")
 @limiter.limit("10/minute")
 async def list_prayer_requests(request: Request):
-    """Return all prayer requests."""
-    return [serialize_doc(doc) async for doc in db.prayer_requests.find({})], 200
+    """List all prayer requests."""
+    data = [serialize_doc(doc) async for doc in db.prayer_requests.find({})]
+    return JSONResponse(content=data, status_code=status.HTTP_200_OK)
 
 
 @app.get("/prayer-requests/{unique_name}")
 @limiter.limit("10/minute")
 async def get_prayer_request(unique_name: str, request: Request):
-    """Return a single prayer request by unique_name."""
+    """Get a prayer request by unique_name."""
     prayer_request = await db.prayer_requests.find_one({"unique_name": unique_name})
-    return serialize_doc(prayer_request) if prayer_request else ({"error": "not found"}, 404)
+    if prayer_request:
+        return JSONResponse(content=serialize_doc(prayer_request), status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "not found"}, status_code=status.HTTP_404_NOT_FOUND)
 
 
 @app.post("/prayer-requests/")
 @limiter.limit("5/minute")
 async def create_prayer_request(prayer_request: PrayerRequest, request: Request):
-    """Create a new prayer request."""
+    """Create a prayer request."""
     prayer_request_data = prayer_request.model_dump()
     text_to_check = f"{prayer_request_data['title']} {prayer_request_data['content']}"
 
     if await is_illegal_content(text_to_check):
-        return {"error": "contains prohibited or unsafe content."}, 400
+        return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=status.HTTP_400_BAD_REQUEST)
 
-    return await create_document(db.prayer_requests, prayer_request_data), 201
+    created = await create_document(db.prayer_requests, prayer_request_data)
+    return JSONResponse(content=created, status_code=status.HTTP_201_CREATED)
 
 
 @app.patch("/prayer-requests/{unique_name}")
 @limiter.limit("10/minute")
 async def edit_prayer_request(unique_name: str, prayer_request: PrayerRequest, request: Request):
-    """Edit a prayer request by unique_name."""
+    """Edit a prayer request by unique_name and edit_code."""
     prayer_request_data = prayer_request.model_dump()
     text_to_check = f"{prayer_request_data['title']} {prayer_request_data['content']}"
 
     if await is_illegal_content(text_to_check):
-        return {"error": "contains prohibited or unsafe content."}, 400
+        return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=status.HTTP_400_BAD_REQUEST)
 
-    updated = await edit_document(
-        db.prayer_requests,
-        {**prayer_request_data, "unique_name": unique_name}
-    )
-    return updated if updated else ({"error": "invalid edit code or prayer request not found"}, 400)
+    updated = await edit_document(db.prayer_requests, {**prayer_request_data, "unique_name": unique_name})
+    if updated:
+        return JSONResponse(content=updated, status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "invalid edit code or prayer request not found"}, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 @app.delete("/prayer-requests/{unique_name}")
 @limiter.limit("5/minute")
 async def delete_prayer_request(unique_name: str, prayer_request: DeletePrayerRequest, request: Request):
-    """Delete a prayer request by unique_name."""
-    deleted = await delete_document(
-        db.prayer_requests,
-        {"unique_name": unique_name, "edit_code": prayer_request.edit_code}
-    )
-    return deleted if deleted else ({"error": "invalid edit code or prayer request not found"}, 400)
+    """Delete a prayer request by unique_name and edit_code."""
+    deleted = await delete_document(db.prayer_requests, {"unique_name": unique_name, "edit_code": prayer_request.edit_code})
+    if deleted:
+        return JSONResponse(content=deleted, status_code=status.HTTP_200_OK)
+    return JSONResponse(content={"error": "invalid edit code or prayer request not found"}, status_code=status.HTTP_400_BAD_REQUEST)
 
 
+# ------------------------------
+# ERROR HANDLING
+# ------------------------------
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc):
     return JSONResponse(
-        status_code=429,
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={"error": "Too many requests, matcha 24 karat labubu dubai chocolate benson boonbeam it's not clocking to you that i'm standing on moonbeam 6 7 crumble cookie"},
     )

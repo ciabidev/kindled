@@ -141,7 +141,7 @@ async def root():
 # ------------------------------
 # NOTES
 # ------------------------------
-@app.get("/notes/")
+@app.get("/notes")
 @limiter.limit("10/minute")
 async def list_notes(request: Request):
     """List all notes."""
@@ -159,7 +159,7 @@ async def get_note(unique_name: str, request: Request):
     return JSONResponse(content={"error": "not found"}, status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.post("/notes/")
+@app.post("/notes")
 @limiter.limit("5/minute")
 async def create_note(note: Note, request: Request):
     """Create a note."""
@@ -202,7 +202,7 @@ async def delete_note(unique_name: str, note: DeleteNote, request: Request):
 # ------------------------------
 # PRAYER REQUESTS
 # ------------------------------
-@app.get("/prayer-requests/")
+@app.get("/prayer-requests")
 @limiter.limit("10/minute")
 async def list_prayer_requests(request: Request):
     """List all prayer requests."""
@@ -220,7 +220,7 @@ async def get_prayer_request(unique_name: str, request: Request):
     return JSONResponse(content={"error": "not found"}, status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.post("/prayer-requests/")
+@app.post("/prayer-requests")
 @limiter.limit("5/minute")
 async def create_prayer_request(prayer_request: PrayerRequest, request: Request):
     """Create a prayer request."""

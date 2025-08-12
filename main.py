@@ -146,30 +146,28 @@ class EntryType(str, Enum):
     note = "note"
     prayer = "prayer"
     
-@app.get("/entries/{entry_type}/")
+@app.get("/entries/")
 @limiter.limit("10/minute")
-async def list_entries(entry_type: EntryType, request: Request):
-    """List all entries of a given type."""
-    data = [serialize_doc(doc) async for doc in db.entries.find({"type": entry_type.value})]
+async def list_entries(request: Request, entry_type: EntryType | None = None):
+    """List all entries, optionally filter by type."""
+    query = {"type": entry_type.value} if entry_type else {}
+    data = [serialize_doc(doc) async for doc in db.entries.find(query)]
     return JSONResponse(content=data, status_code=200)
 
-
-@app.get("/entries/{entry_type}/{unique_name}")
+@app.get("/entries/{unique_name}")
 @limiter.limit("10/minute")
-async def get_entry(entry_type: EntryType, unique_name: str, request: Request):
-    """Get a single entry by type and unique_name."""
-    entry = await db.entries.find_one({"type": entry_type.value, "unique_name": unique_name})
+async def get_entry(unique_name: str, request: Request):
+    """Get an entry by unique_name."""
+    entry = await db.entries.find_one({"unique_name": unique_name})
     if not entry:
         return JSONResponse(content={"error": "not found"}, status_code=404)
     return JSONResponse(content=serialize_doc(entry), status_code=200)
 
-
-@app.post("/entries/{entry_type}/")
+@app.post("/entries/")
 @limiter.limit("5/minute")
-async def create_entry(entry_type: EntryType, entry: Entry, request: Request):
-    """Create a new entry (note or prayer)."""
+async def create_entry(entry: Entry, request: Request):
+    """Create a new entry."""
     entry_data = entry.model_dump()
-    entry_data["type"] = entry_type.value
 
     text_to_check = f"{entry_data['title']} {entry_data['content']}"
     if await is_illegal_content(text_to_check):
@@ -178,26 +176,24 @@ async def create_entry(entry_type: EntryType, entry: Entry, request: Request):
     data = await create_document(db.entries, entry_data)
     return JSONResponse(content=data, status_code=201)
 
-
-@app.patch("/entries/{entry_type}/{unique_name}")
+@app.patch("/entries/{unique_name}")
 @limiter.limit("10/minute")
-async def edit_entry(entry_type: EntryType, unique_name: str, entry: Entry, request: Request):
-    """Edit an entry by type and unique_name."""
+async def edit_entry(unique_name: str, entry: Entry, request: Request):
+    """Edit an entry by unique_name."""
     entry_data = entry.model_dump()
     text_to_check = f"{entry_data['title']} {entry_data['content']}"
     if await is_illegal_content(text_to_check):
         return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=400)
 
-    updated = await edit_document(db.entries, {**entry_data, "type": entry_type.value, "unique_name": unique_name})
+    updated = await edit_document(db.entries, {**entry_data, "unique_name": unique_name})
     return JSONResponse(content=updated if updated else {"error": "invalid edit code or entry not found"},
                         status_code=200 if updated else 400)
 
-
-@app.delete("/entries/{entry_type}/{unique_name}")
+@app.delete("/entries/{unique_name}")
 @limiter.limit("5/minute")
-async def delete_entry(entry_type: EntryType, unique_name: str, entry: DeleteEntry, request: Request):
-    """Delete an entry by type and unique_name."""
-    deleted = await delete_document(db.entries, {"type": entry_type.value, "unique_name": unique_name, "edit_code": entry.edit_code})
+async def delete_entry(unique_name: str, entry: DeleteEntry, request: Request):
+    """Delete an entry by unique_name."""
+    deleted = await delete_document(db.entries, {"unique_name": unique_name, "edit_code": entry.edit_code})
     return JSONResponse(content=deleted if deleted else {"error": "invalid edit code or entry not found"},
                         status_code=200 if deleted else 400)
 

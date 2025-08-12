@@ -22,3 +22,13 @@ class DeleteNote(BaseModel):
 
 class DeletePrayerRequest(BaseModel):
     edit_code: constr(min_length=6, max_length=64)
+
+class Entry(BaseModel):
+    title: constr(strip_whitespace=True, min_length=1, max_length=100)
+    content: constr(strip_whitespace=True, min_length=1, max_length=2000)
+    edit_code: constr(min_length=6, max_length=64)
+    type: Literal["note", "prayer"]  # distinguishes the two
+    unique_name: str | None = None
+    
+class DeleteEntry(BaseModel):
+    edit_code: constr(min_length=6, max_length=64)

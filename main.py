@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from models import Note, PrayerRequest, DeleteNote, DeletePrayerRequest
+from models import Entry, DeleteEntry
 from db import db
 from bson import ObjectId
 from typing import Optional

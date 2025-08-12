@@ -12,7 +12,7 @@ class Entry(BaseModel):
     title: constr(strip_whitespace=True, min_length=1, max_length=100)
     content: constr(strip_whitespace=True, min_length=1, max_length=2000)
     edit_code: constr(min_length=6, max_length=64)
-    entry_type: EntryType = Field(..., alias="type")
+    type: EntryType
     unique_name: str | None = None
     
 class DeleteEntry(BaseModel):

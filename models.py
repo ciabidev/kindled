@@ -4,16 +4,16 @@ from typing import Optional
 from pydantic import BaseModel, constr
 from enum import Enum
 
-class EntryType(str, Enum):
-    note = "note"
-    prayer = "prayer"
+class NoteType(str, Enum):
+    general = "general"
+    prayer_request = "prayer_request"
     
-class Entry(BaseModel):
+class Note(BaseModel):
     title: constr(strip_whitespace=True, min_length=1, max_length=100)
     content: constr(strip_whitespace=True, min_length=1, max_length=2000)
     edit_code: constr(min_length=6, max_length=64)
-    type: EntryType
+    type: NoteType
     unique_name: str | None = None
     
-class DeleteEntry(BaseModel):
+class DeleteNote(BaseModel):
     edit_code: constr(min_length=6, max_length=64)

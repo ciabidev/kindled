@@ -10,3 +10,5 @@ slowapi
 pydantic
 openai
 getstream
+sentry-sdk[fastapi]
+python-slugify

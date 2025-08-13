@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from models import Entry, DeleteEntry
+from models import Note, DeleteNote
 from db import db
 from bson import ObjectId
 from typing import Optional
@@ -8,6 +8,8 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from slugify import slugify
+import sentry_sdk
 from enum import Enum
 from pydantic import BaseModel, constr
 import os
@@ -16,13 +18,35 @@ import dotenv
 dotenv.load_dotenv()
 import hashlib
 import datetime
-app = FastAPI()
 from openai import OpenAI
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
+
 from getstream import Stream
 stream_api_key = os.getenv("STREAM_API_KEY")
 stream_api_secret = os.getenv("STREAM_API_SECRET")
+# ------------------------------
+# initialization
+# ------------------------------
+
+app = FastAPI()
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+sentry_sdk.init(
+    dsn="https://1b32260ea9e47a42922d92b34b2e48c2@o4509832492220416.ingest.us.sentry.io/4509832505720832",
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,
+)
+
+@app.get("/sentry-debug")
+async def trigger_error():
+    division_by_zero = 1 / 0
+
+reset_db = False
+if reset_db:
+    db.notes.drop()
+    db.entries.drop()
+    db.prayer_requests.drop()
 
 # ------------------------------
 # Helpers
@@ -42,7 +66,7 @@ async def is_illegal_content(text: str) -> bool:
     entity_id = str(uuid.uuid4())
     creator_id = str(uuid.uuid4())
     stream_response = client.moderation.check(
-        entity_type="note",
+        entity_type="general",
         entity_id="entity_" + entity_id,
         entity_creator_id="user_" + creator_id,
         moderation_payload={"texts": [text], "images": []},
@@ -68,27 +92,43 @@ def serialize_doc(doc: dict) -> dict:
         "title": str(doc["title"]),
         "content": str(doc["content"]),
         "created_at": doc["_id"].generation_time.isoformat(),  # use ObjectId timestamp
-        "unique_name": doc.get("unique_name")
+        "unique_name": doc.get("unique_name"),
+        "type": doc.get("type")
     }
 
 import re
 
-import re
+MAX_SLUG_LENGTH = 20
+def generate_slug(title: str) -> str:
+    slug = slugify(title)
+    if len(slug) <= MAX_SLUG_LENGTH:
+        return slug
+    # Cut to max length, then trim off partial last word (from last '-')
+    truncated = slug[:MAX_SLUG_LENGTH]
+    last_dash = truncated.rfind('-') # find the position of the last dash
+    if last_dash == -1:
+        return truncated  # no dash found, just return truncated
+    return truncated[:last_dash] # cut off at last dash
 
 async def generate_unique_name(collection, title: str) -> str:
-    base_name = title.lower().strip().replace(" ", "-")[:10]
+    base_slug = generate_slug(title)
+    pattern = f"^{re.escape(base_slug)}(?:-\\d+)?$"
     existing_names = await collection.distinct(
         "unique_name",
-        {"unique_name": {"$regex": f"^{base_name}(?:-\\d+)?$", "$options": "i"}}
+        {"unique_name": {"$regex": pattern, "$options": "i"}}
     )
-    counter = 0
-    unique_name = base_name
-    while unique_name in existing_names:
-        counter += 1
-        unique_name = f"{base_name}-{counter}"
-    print("Existing:", existing_names)
-    return unique_name
 
+    counter = 0
+    unique_name = base_slug
+    while unique_name.lower() in (name.lower() for name in existing_names):
+        counter += 1
+        suffix = f"-{counter}"
+        # Make sure unique_name + suffix <= MAX_SLUG_LENGTH
+        max_base_len = MAX_SLUG_LENGTH - len(suffix)
+        truncated_base = base_slug[:max_base_len].rstrip('-') # remove trailing '-'
+        unique_name = f"{truncated_base}{suffix}"
+
+    return unique_name
 
 
 def hash_code(code: str) -> str:
@@ -139,62 +179,67 @@ async def root():
 
 
 # ------------------------------
-# ENTRIES
+# NOTES
 # ------------------------------
 
-class EntryType(str, Enum):
-    note = "note"
-    prayer = "prayer"
+class NoteType(str, Enum):
+    general = "general"
+    prayer_request = "prayer_request"
     
-@app.get("/entries/")
-@limiter.limit("10/minute")
-async def list_entries(request: Request, entry_type: EntryType | None = None):
-    """List all entries, optionally filter by type."""
-    query = {"type": entry_type.value} if entry_type else {}
-    data = [serialize_doc(doc) async for doc in db.entries.find(query)]
+@app.get("/notes/")
+async def list_notes(request: Request, note_type: NoteType | None = None, text_filter: str | None = None):
+    """List all notes, optionally filter by type and what the title/content contains."""
+    query = {}
+    if note_type:
+        query["type"] = note_type.value
+    if text_filter:
+        # no edit codes
+        query["$or"] = [
+            {"title": {"$regex": text_filter, "$options": "i"}},
+            {"content": {"$regex": text_filter, "$options": "i"}}
+        ]
+
+    data = [serialize_doc(doc) async for doc in db.notes.find(query)]
     return JSONResponse(content=data, status_code=200)
 
-@app.get("/entries/{unique_name}")
-@limiter.limit("10/minute")
-async def get_entry(unique_name: str, request: Request):
-    """Get an entry by unique_name."""
-    entry = await db.entries.find_one({"unique_name": unique_name})
-    if not entry:
+@app.get("/notes/{unique_name}")
+async def get_note(unique_name: str, request: Request):
+    """Get an note by unique_name."""
+    note = await db.notes.find_one({"unique_name": unique_name})
+    if not note:
         return JSONResponse(content={"error": "not found"}, status_code=404)
-    return JSONResponse(content=serialize_doc(entry), status_code=200)
+    return JSONResponse(content=serialize_doc(note), status_code=200)
 
-@app.post("/entries/")
-@limiter.limit("5/minute")
-async def create_entry(entry: Entry, request: Request):
-    """Create a new entry."""
-    entry_data = entry.model_dump()
+@app.post("/notes/")
+@limiter.limit("10/minute")
+async def create_note(note: Note, request: Request):
+    """Create a new note."""
+    note_data = note.model_dump()
 
-    text_to_check = f"{entry_data['title']} {entry_data['content']}"
+    text_to_check = f"{note_data['title']} {note_data['content']}"
     if await is_illegal_content(text_to_check):
         return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=400)
 
-    data = await create_document(db.entries, entry_data)
+    data = await create_document(db.notes, note_data)
     return JSONResponse(content=data, status_code=201)
 
-@app.patch("/entries/{unique_name}")
-@limiter.limit("10/minute")
-async def edit_entry(unique_name: str, entry: Entry, request: Request):
-    """Edit an entry by unique_name."""
-    entry_data = entry.model_dump()
-    text_to_check = f"{entry_data['title']} {entry_data['content']}"
+@app.patch("/notes/{unique_name}")
+async def edit_note(unique_name: str, note: Note, request: Request):
+    """Edit an note by unique_name."""
+    note_data = note.model_dump()
+    text_to_check = f"{note_data['title']} {note_data['content']}"
     if await is_illegal_content(text_to_check):
         return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=400)
 
-    updated = await edit_document(db.entries, {**entry_data, "unique_name": unique_name})
-    return JSONResponse(content=updated if updated else {"error": "invalid edit code or entry not found"},
+    updated = await edit_document(db.notes, {**note_data, "unique_name": unique_name})
+    return JSONResponse(content=updated if updated else {"error": "invalid edit code or note not found"},
                         status_code=200 if updated else 400)
 
-@app.delete("/entries/{unique_name}")
-@limiter.limit("5/minute")
-async def delete_entry(unique_name: str, entry: DeleteEntry, request: Request):
-    """Delete an entry by unique_name."""
-    deleted = await delete_document(db.entries, {"unique_name": unique_name, "edit_code": entry.edit_code})
-    return JSONResponse(content=deleted if deleted else {"error": "invalid edit code or entry not found"},
+@app.delete("/notes/{unique_name}")
+async def delete_note(unique_name: str, note: DeleteNote, request: Request):
+    """Delete an note by unique_name."""
+    deleted = await delete_document(db.notes, {"unique_name": unique_name, "edit_code": note.edit_code})
+    return JSONResponse(content=deleted if deleted else {"error": "invalid edit code or note not found"},
                         status_code=200 if deleted else 400)
 
 # ------------------------------

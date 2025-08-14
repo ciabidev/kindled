@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from getstream import Stream
 from openai import OpenAI
 from pydantic import BaseModel, constr
+import sentry_sdk
+from typing import Optional, Annotated
 from random_word import RandomWords
 from slugify import slugify
 from slowapi import Limiter
@@ -64,10 +66,9 @@ async def is_illegal_content(text: str) -> bool:
         raise RuntimeError("Stream API credentials not set in environment.")
 
     client = Stream(api_key=stream_api_key, api_secret=stream_api_secret)
-    # randomly generated entity_id and creator_id
     entity_id = str(uuid.uuid4())
     creator_id = str(uuid.uuid4())
-    stream_response = client.moderation.check(
+    response = client.moderation.check(
         entity_type="general",
         entity_id="entity_" + entity_id,
         entity_creator_id="user_" + creator_id,
@@ -75,15 +76,14 @@ async def is_illegal_content(text: str) -> bool:
         config_key="custom:kindled",
         options={"force_sync": True}
     )
-
-    # even though its literally not defined if it works dont change it ✅✅✅✅✅
-    result: CheckResponse = stream_response.data
-
-    # Pull recommended_action from either top-level or item
+    result = response.data
+    print(result)
     action = getattr(result, "recommended_action", None) or getattr(result.item, "recommended_action", None)
 
     print("Action:", action)
-    return action in ("block", "shadow_block", "remove")
+
+    is_blocked = action in ("block", "shadow_block", "remove")
+    return is_blocked
 
 
 
@@ -234,7 +234,7 @@ async def edit_note(unique_name: str, note: Note, request: Request):
     note_data = note.model_dump()
     text_to_check = f"{note_data['title']} {note_data['content']}"
     if await is_illegal_content(text_to_check):
-        return JSONResponse(content={"error": "contains prohibited or unsafe content."}, status_code=400)
+        return JSONResponse(content={"error": "contains prohibited or unsafe content.", "type":""}, status_code=400)
 
     updated = await edit_document(db.notes, {**note_data, "unique_name": unique_name})
     return JSONResponse(content=updated if updated else {"error": "invalid edit code or note not found"},

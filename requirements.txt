@@ -12,3 +12,4 @@ openai
 getstream
 sentry-sdk[fastapi]
 python-slugify
+random-word

@@ -1,26 +1,30 @@
-from fastapi import FastAPI
-from models import Note, DeleteNote
-from db import db
-from bson import ObjectId
-from typing import Optional
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse
-from slugify import slugify
-import sentry_sdk
-from enum import Enum
-from pydantic import BaseModel, constr
-import os
-import uuid
-import dotenv
-dotenv.load_dotenv()
-import hashlib
+# --- Standard library ---
 import datetime
-from openai import OpenAI
+import hashlib
+import os
+import random
+import re
+import string
+import uuid
 
+# --- Third-party packages ---
+from bson import ObjectId
+from dotenv import load_dotenv
+from enum import Enum
+from fastapi import FastAPI, Query, Request, status
+from fastapi.responses import JSONResponse
 from getstream import Stream
+from openai import OpenAI
+from pydantic import BaseModel, constr
+from random_word import RandomWords
+from slugify import slugify
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+# --- Local modules ---
+from db import db
+from models import Note, DeleteNote
 stream_api_key = os.getenv("STREAM_API_KEY")
 stream_api_secret = os.getenv("STREAM_API_SECRET")
 # ------------------------------
@@ -48,14 +52,12 @@ if reset_db:
     db.entries.drop()
     db.prayer_requests.drop()
 
+stream_api_key = os.getenv("STREAM_API_KEY")
+stream_api_secret = os.getenv("STREAM_API_SECRET")
+
 # ------------------------------
 # Helpers
 # ------------------------------
-from getstream import Stream
-import os
-
-stream_api_key = os.getenv("STREAM_API_KEY")
-stream_api_secret = os.getenv("STREAM_API_SECRET")
 
 async def is_illegal_content(text: str) -> bool:
     if not stream_api_key or not stream_api_secret:
@@ -96,22 +98,29 @@ def serialize_doc(doc: dict) -> dict:
         "type": doc.get("type")
     }
 
-import re
+# easy to pronounce and spell and remember
+BIBLE_WORDS = [
+    # Common nouns / concepts
+    "light", "hope", "peace", "grace", "joy", "truth", "vine", "lamb",
+    "seed", "star", "bread", "rock", "path", "gift", "ark", "fish",
+    "well", "door", "oil", "crown",
 
-MAX_SLUG_LENGTH = 20
-def generate_slug(title: str) -> str:
-    slug = slugify(title)
-    if len(slug) <= MAX_SLUG_LENGTH:
-        return slug
-    # Cut to max length, then trim off partial last word (from last '-')
-    truncated = slug[:MAX_SLUG_LENGTH]
-    last_dash = truncated.rfind('-') # find the position of the last dash
-    if last_dash == -1:
-        return truncated  # no dash found, just return truncated
-    return truncated[:last_dash] # cut off at last dash
+    # Names
+    "abel", "levi", "amos", "noah", "ruth", "ezra", "luke", "mark",
+    "joel", "paul", "john", "mary", "anna", "adam", "eve", "matthew",
+    "david", "samuel", "joseph", "elijah", "benjamin", "isaac", "jacob",
+
+    # Nature / imagery
+    "river", "hill", "rain", "water", "wind", "sun", "fig", "oak", "leaf",
+    "sand", "stone", "water", "cloud", "mountain", "tree", "flower",
+]
 
 async def generate_unique_name(collection, title: str) -> str:
-    base_slug = generate_slug(title)
+    unique_name = ""
+    word1 = random.choice(BIBLE_WORDS)
+    word2 = random.choice(BIBLE_WORDS)
+
+    base_slug = f"{word1}-{word2}"
     pattern = f"^{re.escape(base_slug)}(?:-\\d+)?$"
     existing_names = await collection.distinct(
         "unique_name",
@@ -120,16 +129,12 @@ async def generate_unique_name(collection, title: str) -> str:
 
     counter = 0
     unique_name = base_slug
+    suffix = ""
     while unique_name.lower() in (name.lower() for name in existing_names):
         counter += 1
         suffix = f"-{counter}"
-        # Make sure unique_name + suffix <= MAX_SLUG_LENGTH
-        max_base_len = MAX_SLUG_LENGTH - len(suffix)
-        truncated_base = base_slug[:max_base_len].rstrip('-') # remove trailing '-'
-        unique_name = f"{truncated_base}{suffix}"
-
+        unique_name = f"{word1}-{word2}{suffix}"
     return unique_name
-
 
 def hash_code(code: str) -> str:
     """Hash the edit code."""
@@ -187,7 +192,7 @@ class NoteType(str, Enum):
     prayer_request = "prayer_request"
     
 @app.get("/notes/")
-async def list_notes(request: Request, note_type: NoteType | None = None, text_filter: str | None = None):
+async def list_notes(request: Request, note_type: Annotated[NoteType | None, Query(alias="text-filter")] = None, text_filter: Annotated[str | None, Query(alias="text-filter")] = None):
     """List all notes, optionally filter by type and what the title/content contains."""
     query = {}
     if note_type:

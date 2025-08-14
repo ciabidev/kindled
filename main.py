@@ -103,7 +103,8 @@ BIBLE_WORDS = [
     # Common nouns / concepts
     "light", "hope", "peace", "grace", "joy", "truth", "vine", "lamb",
     "seed", "star", "bread", "rock", "path", "gift", "ark", "fish",
-    "well", "door", "oil", "crown",
+    "well", "door", "oil", "crown", "prayer", "bible", "church", "faith",
+    "love", "mercy", "praise", "shepherd", "soul", "wisdom"
 
     # Names
     "abel", "levi", "amos", "noah", "ruth", "ezra", "luke", "mark",
@@ -111,8 +112,7 @@ BIBLE_WORDS = [
     "david", "samuel", "joseph", "elijah", "benjamin", "isaac", "jacob",
 
     # Nature / imagery
-    "river", "hill", "rain", "water", "wind", "sun", "fig", "oak", "leaf",
-    "sand", "stone", "water", "cloud", "mountain", "tree", "flower",
+    "river", "hill", "rain", "water", "wind", "sun", "fig", "sand", "stone", "water", "cloud", "mountain", "tree", "flower",
 ]
 
 async def generate_unique_name(collection, title: str) -> str:

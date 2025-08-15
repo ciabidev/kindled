@@ -4,7 +4,6 @@ import hashlib
 import os
 import random
 import re
-import unicodedata
 import string
 import uuid
 
@@ -44,17 +43,6 @@ sentry_sdk.init(
     # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
     send_default_pii=True,
 )
-
-# Ensure a MongoDB text index exists for fast, relevant text searches.
-# This runs on startup and will not fail the app if index creation errors.
-@app.on_event("startup")
-async def ensure_text_index():
-    try:
-        # create a combined text index on title and content for efficient $text searches
-        await db.notes.create_index([("title", "text"), ("content", "text")], name="title_content_text_idx")
-    except Exception as e:
-        # Log and continue -- searching will fall back to regex if $text is not available.
-        print("ensure_text_index: failed to create text index:", e)
 
 @app.get("/sentry-debug")
 async def trigger_error():
@@ -109,29 +97,6 @@ def serialize_doc(doc: dict) -> dict:
         "unique_name": doc.get("unique_name"),
         "type": doc.get("type")
     }
-
-def sanitize_search_query(q: str, max_length: int = 500) -> str:
-    """
-    Sanitize a user-provided search query to handle special characters and control bytes.
-
-    Steps:
-    - Unicode normalize to NFKC.
-    - Remove control characters (0x00-0x1F).
-    - Collapse whitespace to single spaces and trim.
-    - Truncate to max_length characters.
-    """
-    if q is None:
-        return q
-    # Normalize unicode to a stable form
-    s = unicodedata.normalize("NFKC", q)
-    # Remove C0 control characters (including null, bell, etc.)
-    s = re.sub(r'[\x00-\x1F]+', ' ', s)
-    # Collapse whitespace and trim
-    s = re.sub(r'\s+', ' ', s).strip()
-    # Truncate to a safe length
-    if len(s) > max_length:
-        s = s[:max_length]
-    return s
 
 # easy to pronounce and spell and remember
 BIBLE_WORDS = [
@@ -225,98 +190,22 @@ async def root():
 class NoteType(str, Enum):
     general = "general"
     prayer_request = "prayer_request"
-
-# ai lowk carried this function
+    
 @app.get("/notes/")
-async def list_notes(
-    request: Request,
-    q: Annotated[Optional[str], Query(None, alias="q")] = None,
-    note_type: Annotated[Optional[NoteType], Query(None, alias="type")] = None,
-    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
-    skip: Annotated[int, Query(0, ge=0)] = 0,
-    sort_by: Annotated[str, Query("created_at", alias="sort_by")] = "created_at",
-    sort_order: Annotated[str, Query("desc", alias="sort_order", regex="^(asc|desc)$")] = "desc",
-    date_from: Annotated[Optional[str], Query(None, alias="date_from")] = None,
-    date_to: Annotated[Optional[str], Query(None, alias="date_to")] = None,
-):
-    """
-    List notes with improved search and filtering.
-
-    Query params:
-    - q: full-text query (uses $text when available, falls back to regex)
-    - type: filter by note type (general, prayer_request)
-    - limit: number of items to return (1-100)
-    - skip: number of items to skip (for pagination)
-    - sort_by: 'created_at' or 'title'
-    - sort_order: 'asc' or 'desc'
-    - date_from/date_to: ISO-8601 datetimes to filter by creation time
-    """
-    query: dict = {}
-
-    # filter by explicit type
+async def list_notes(request: Request, note_type: Annotated[NoteType | None, Query(alias="text-filter")] = None, text_filter: Annotated[str | None, Query(alias="text-filter")] = None):
+    """List all notes, optionally filter by type and what the title/content contains."""
+    query = {}
     if note_type:
         query["type"] = note_type.value
+    if text_filter:
+        # no edit codes
+        query["$or"] = [
+            {"title": {"$regex": text_filter, "$options": "i"}},
+            {"content": {"$regex": text_filter, "$options": "i"}}
+        ]
 
-    # filter by date range using ObjectId timestamp if provided
-    id_query: dict = {}
-    if date_from:
-        try:
-            dt = datetime.datetime.fromisoformat(date_from)
-            id_query["$gte"] = ObjectId.from_datetime(dt)
-        except Exception:
-            pass
-    if date_to:
-        try:
-            dt = datetime.datetime.fromisoformat(date_to)
-            id_query["$lte"] = ObjectId.from_datetime(dt)
-        except Exception:
-            pass
-    if id_query:
-        query["_id"] = id_query
-
-    # Prepare search: prefer $text (requires text index); fallback to escaped regex.
-    # Sanitize user input to handle special characters/control bytes before using it.
-    final_query = dict(query)  # may be modified if fallback needed
-    if q:
-        sanitized_q = sanitize_search_query(q)
-        # If sanitization strips the query to empty, treat as no-search.
-        if not sanitized_q:
-            total = await db.notes.count_documents(final_query)
-        else:
-            # Try to use $text; if it fails at execution, fall back to regex approach.
-            try:
-                # test a count to see if $text is supported / index exists
-                test_q = {**query, **{"$text": {"$search": sanitized_q}}}
-                total = await db.notes.count_documents(test_q)
-                final_query = test_q
-            except Exception:
-                # fallback: safe regex search (escape sanitized user input)
-                escaped = re.escape(sanitized_q)
-                regex_query = {"$or": [
-                    {"title": {"$regex": escaped, "$options": "i"}},
-                    {"content": {"$regex": escaped, "$options": "i"}}
-                ]}
-                final_query = {**query, **regex_query}
-                total = await db.notes.count_documents(final_query)
-    else:
-        total = await db.notes.count_documents(final_query)
-
-    # Determine sort field mapping
-    sort_map = {"created_at": "_id", "title": "title"}
-    sort_field = sort_map.get(sort_by, "_id")
-    direction = 1 if sort_order == "asc" else -1
-
-    cursor = db.notes.find(final_query).sort(sort_field, direction).skip(skip).limit(limit)
-    data = [serialize_doc(doc) async for doc in cursor]
-
-    meta = {
-        "total_count": total,
-        "limit": limit,
-        "skip": skip,
-        "returned_count": len(data),
-    }
-
-    return JSONResponse(content={"meta": meta, "data": data}, status_code=200)
+    data = [serialize_doc(doc) async for doc in db.notes.find(query)]
+    return JSONResponse(content=data, status_code=200)
 
 @app.get("/notes/{unique_name}")
 async def get_note(unique_name: str, request: Request):

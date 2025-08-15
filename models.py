@@ -17,5 +17,3 @@ class Note(BaseModel):
     
 class DeleteNote(BaseModel):
     edit_code: constr(min_length=6, max_length=64)
-
-    
